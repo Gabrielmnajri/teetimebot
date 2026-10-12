@@ -1,0 +1,16 @@
+{
+  "name": "teetime-bot",
+  "version": "1.0.0",
+  "description": "Books Saturday tee times at Santo Domingo Country Club the moment they open",
+  "main": "bot.js",
+  "scripts": {
+    "login": "node login.js",
+    "book": "node bot.js",
+    "dry-run": "node bot.js --dry-run --now",
+    "test-alert": "node bot.js --test-alert"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "playwright": "^1.47.2"
+  }
+}
