@@ -10,6 +10,8 @@
 //   --now         skip waiting for 8:00 (use with --date to test any day)
 //   --date=YYYY-MM-DD  override target date (default: next Saturday)
 //   --times=12:10,12:20  override times (handy for dry runs on weekdays)
+//   --players=4299-1,4299  --course=2  --rate="GF 09H SOCIOS"  override .env
+//   --check-login just check the club login is still valid (alert if not)
 //   --test-alert  just send a WhatsApp test message and exit
 
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
@@ -29,9 +31,15 @@ const cfg = {
   players: (process.env.PLAYERS || '').split(',').map((s) => s.trim()).filter(Boolean),
   pollStart: process.env.POLL_START || '07:59:45',
   pollEnd: process.env.POLL_END || '08:05:00',
+  openTime: process.env.OPEN_TIME || '08:00',
   phone: process.env.WHATSAPP_PHONE,
   apikey: process.env.CALLMEBOT_APIKEY,
+  tgToken: process.env.TELEGRAM_BOT_TOKEN,
+  tgChat: process.env.TELEGRAM_CHAT_ID,
 };
+if (argVal('players')) cfg.players = argVal('players').split(',').map((s) => s.trim()).filter(Boolean);
+if (argVal('course')) cfg.course = argVal('course');
+if (argVal('rate')) cfg.rate = argVal('rate');
 
 const log = (...m) => console.log(new Date().toLocaleTimeString('es-DO', { hour12: false }), ...m);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -51,8 +59,21 @@ function todayAt(hms) {
   return d;
 }
 
-async function whatsapp(text) {
-  if (!cfg.phone || !cfg.apikey) return log('(WhatsApp not configured)', text);
+// Sends an alert to Telegram and/or WhatsApp, whichever is set up in .env
+async function notify(text) {
+  if (cfg.tgToken && cfg.tgChat) {
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${cfg.tgToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: cfg.tgChat, text }),
+      });
+      log('Telegram sent:', r.status);
+    } catch (e) {
+      log('Telegram failed:', e.message);
+    }
+  }
+  if (!cfg.phone || !cfg.apikey) return cfg.tgToken || log('(alerts not configured)', text);
   const url = `https://api.callmebot.com/whatsapp.php?phone=${cfg.phone}&apikey=${cfg.apikey}&text=${encodeURIComponent(text)}`;
   try {
     const r = await fetch(url);
@@ -63,10 +84,11 @@ async function whatsapp(text) {
 }
 
 async function main() {
-  if (flag('test-alert')) return whatsapp('⛳ Tee-time bot test: WhatsApp alerts are working.');
+  if (flag('test-alert')) return notify('⛳ Tee-time bot test: alerts are working.');
 
-  if (cfg.players.length < 3) throw new Error('PLAYERS needs at least 3 member numbers (weekend rule).');
   const date = argVal('date') || nextSaturday();
+  const weekend = [0, 6].includes(new Date(`${date}T12:00:00`).getDay());
+  if (weekend && cfg.players.length < 3) throw new Error('Weekends need at least 3 member numbers.');
   if (argVal('times')) { const t = argVal('times').split(','); cfg.teeTime = t[0]; cfg.fallbacks = t.slice(1); }
   const times = [cfg.teeTime, ...cfg.fallbacks];
   const sheetUrl = `${BASE}/consumer/ebookings?i=1&resourcetype=1&date=${date}&resource=${cfg.course}`;
@@ -83,10 +105,11 @@ async function main() {
   await sleep(2000);
   const loggedIn = await page.getByText(/Hola\s/i).first().isVisible().catch(() => false);
   if (!loggedIn) {
-    await whatsapp('⚠️ Tee-time bot: you are LOGGED OUT of the Country Club site. Run "npm run login" on the PC now.');
+    await notify('⚠️ Tee-time bot: you are LOGGED OUT of the Country Club site. On the computer, double-click LOGIN-AGAIN in the bot folder and log in.');
     throw new Error('Not logged in. Run: npm run login');
   }
   log('Logged in ✔');
+  if (flag('check-login')) return ctx.close();
 
   // Warn if something is already sitting in the cart (it would be paid together)
   const cartLines = await page
@@ -94,7 +117,7 @@ async function main() {
     .catch(() => 0);
   if (cartLines > 0) {
     log(`Note: cart already has ${cartLines} item(s).`);
-    await whatsapp(`ℹ️ Heads up: your club cart already has ${cartLines} item(s). Empty it before 8:00 so you only pay for Saturday.`);
+    await notify(`ℹ️ Heads up: your club cart already has ${cartLines} item(s). Empty it before booking opens so you only pay for this tee time.`);
   }
 
   // 2) Wait until polling window
@@ -179,7 +202,7 @@ async function main() {
       .catch(() => null) || Number(process.env.RATE_TYPE_ID || 3);
     log(`Rate "${cfg.rate}" = idType ${rateId}. Racing for ${cfg.teeTime}…`);
 
-    const fireAt = flag('now') ? Date.now() : todayAt('08:00:00').getTime();
+    const fireAt = flag('now') ? Date.now() : todayAt(cfg.openTime).getTime();
     const race = await page.evaluate(
       ({ course, date, primary, idType, players, fireAt, deadline }) =>
         new Promise((resolve) => {
@@ -261,12 +284,12 @@ async function main() {
   }
 
   if (!chosen) {
-    await whatsapp(`❌ Tee-time bot: could not get ${times.join(' / ')} for ${date}. Check the site now.`);
+    await notify(`❌ Tee-time bot: could not get ${times.join(' / ')} for ${date}. Check the site now.`);
     throw new Error('No matching slot booked before deadline.');
   }
 
   if (flag('dry-run')) {
-    await whatsapp(`🧪 Tee-time bot dry run OK: ${date} ${chosen} was bookable (nothing booked).`);
+    await notify(`🧪 Tee-time bot dry run OK: ${date} ${chosen} was bookable (nothing booked).`);
     await sleep(5000);
     return ctx.close();
   }
@@ -287,13 +310,13 @@ async function main() {
 
   // 5) Slot is HELD in the cart - tell Gabriel immediately
   log('Slot HELD in cart ✔');
-  await whatsapp(`✅ Tee time HELD: ${date} ${chosen}, Campo ${cfg.course === '1' ? 'Senior' : 'Los Robles'}, ${cfg.players.length} players. Pay within ~15 min!`);
+  await notify(`✅ Tee time HELD: ${date} ${chosen}, Campo ${cfg.course === '1' ? 'Senior' : 'Los Robles'}, ${cfg.players.length} players. Pay within ~15 min!`);
   await page.goto(`${BASE}/consumer/eshop/cart`, { waitUntil: 'domcontentloaded' });
   const linesNow = await page
     .evaluate(async () => ((await (await fetch('/eshop/cart.api?cachebreaker=' + Date.now())).json()).lines || []).length)
     .catch(() => 0);
   if (linesNow > cfg.players.length) {
-    await whatsapp(`⚠️ Cart has ${linesNow} items (expected ${cfg.players.length}). Remove extras before paying.`);
+    await notify(`⚠️ Cart has ${linesNow} items (expected ${cfg.players.length}). Remove extras before paying.`);
   }
 
   // 8) Cart -> accept terms -> Pagar
@@ -308,10 +331,10 @@ async function main() {
     await page.getByText('Pagar', { exact: true }).last().click();
     await page.waitForURL(/azul\.com\.do/, { timeout: 30000 });
     log('On AZUL payment page — waiting for you to enter the CVV.');
-    await whatsapp('💳 Payment page is open on the PC. Enter the card security code and pay. (Or pay from the cart on your phone.)');
+    await notify('💳 Payment page is open on the PC. Enter the card security code and pay. (Or pay from the cart on your phone.)');
   } catch (e) {
     log('Could not reach AZUL automatically:', e.message);
-    await whatsapp('⚠️ Slot is in your cart but I could not open the payment page. Go to the cart and pay now.');
+    await notify('⚠️ Slot is in your cart but I could not open the payment page. Go to the cart and pay now.');
   }
 
   // Keep window open 20 min so you can finish paying
@@ -322,7 +345,7 @@ async function main() {
 main().catch(async (e) => {
   log('ERROR:', e.message);
   if (!/Not logged in|No matching slot/.test(e.message)) {
-    await whatsapp(`⚠️ Tee-time bot error: ${e.message.slice(0, 200)}. Book manually now!`);
+    await notify(`⚠️ Tee-time bot error: ${e.message.slice(0, 200)}. Book manually now!`);
   }
   process.exitCode = 1;
 });

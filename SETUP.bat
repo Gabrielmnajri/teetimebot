@@ -1,6 +1,6 @@
 @echo off
-REM Double-click this file to set up the tee-time bot. Safe to run again any time.
-title Tee-Time Bot Setup
+REM Double-click this file to set up the tee-time assistant. Safe to run again any time.
+title Tee-Time Assistant Setup
 cd /d "%~dp0"
 
 echo %~dp0 | find /i "\AppData\Local\Temp\" >nul
@@ -8,9 +8,12 @@ if not errorlevel 1 goto notextracted
 
 echo.
 echo  ============================================================
-echo    TEE-TIME BOT SETUP
+echo    TEE-TIME ASSISTANT SETUP
 echo  ============================================================
 echo.
+
+REM If the assistant is already running (setup run again), pause it for now
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0schedule.ps1" -StopOnly >nul 2>nul
 
 REM ---- 1. Node.js (the program that runs the bot) ----
 set "PATH=%PATH%;%ProgramFiles%\nodejs"
@@ -42,10 +45,10 @@ REM ---- 3. WhatsApp + club login ----
 node setup.js
 if errorlevel 1 goto failed
 
-REM ---- 4. Schedule every Friday ----
+REM ---- 4. Start the assistant (and at every sign-in) ----
 echo.
 echo  ------------------------------------------------------------
-echo   STEP 3 of 3: Schedule it for every Friday
+echo   STEP 3 of 3: Start your assistant
 echo  ------------------------------------------------------------
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0schedule.ps1"
 if errorlevel 1 goto failed
@@ -54,15 +57,15 @@ echo.
 echo  ============================================================
 echo    ALL DONE!
 echo  ============================================================
-echo   The bot will run every Friday at 7:57 AM and book Saturday.
+echo   Your assistant is running. Open Telegram and text it, e.g.:
 echo.
-echo   On Friday mornings, just make sure the PC is:
-echo     - ON or ASLEEP, not shut down
-echo     - plugged in
-echo     - signed in to Windows
+echo       book saturday 8:30
 echo.
-echo   You will get WhatsApp messages telling you what happened.
-echo   If one says "LOGGED OUT", double-click LOGIN-AGAIN in this folder.
+echo   Text it "help" to see everything it can do.
+echo.
+echo   Keep this PC plugged in, ON, and signed in to Windows.
+echo   It has been set to never sleep while plugged in.
+echo   If Telegram says "LOGGED OUT", double-click LOGIN-AGAIN here.
 echo.
 pause
 exit /b 0

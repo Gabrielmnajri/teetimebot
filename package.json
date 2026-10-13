@@ -1,9 +1,10 @@
 {
   "name": "teetime-bot",
   "version": "1.0.0",
-  "description": "Books Saturday tee times at Santo Domingo Country Club the moment they open",
-  "main": "bot.js",
+  "description": "Telegram assistant that books tee times at Santo Domingo Country Club the moment they open",
+  "main": "assistant.js",
   "scripts": {
+    "assistant": "node assistant.js",
     "login": "node login.js",
     "book": "node bot.js",
     "dry-run": "node bot.js --dry-run --now",

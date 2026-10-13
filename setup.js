@@ -1,5 +1,5 @@
-// Friendly setup helper, started by SETUP.bat. Asks for the WhatsApp details,
-// writes .env, opens the club site so you can log in, and sends a test message.
+// Friendly setup helper, started by SETUP.bat. Connects your Telegram
+// assistant, writes .env and opens the club site so you can log in.
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
@@ -20,6 +20,16 @@ const openUrl = (url) => {
   const cmd = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
   exec(cmd);
 };
+async function tg(token, method, body = {}) {
+  const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.description);
+  return j.result;
+}
 const runNode = (...args) => spawnSync(process.execPath, args, { cwd: dir, stdio: 'inherit' });
 
 function readEnv() {
@@ -40,52 +50,62 @@ function writeEnv(values) {
   fs.writeFileSync(envPath, lines.join('\n'));
 }
 
-async function whatsappStep() {
+async function telegramStep() {
   const current = readEnv();
-  if (current.WHATSAPP_PHONE && current.CALLMEBOT_APIKEY) {
-    const keep = await ask(`WhatsApp is already set up for ${current.WHATSAPP_PHONE}. Keep it? (Y/n): `);
+  if (current.TELEGRAM_BOT_TOKEN && current.TELEGRAM_CHAT_ID) {
+    const keep = await ask(' Telegram is already connected. Keep it? (Y/n): ');
     if (!/^n/i.test(keep)) return;
   }
 
   say(
     '',
     '------------------------------------------------------------',
-    ' STEP 1 of 3: WhatsApp alerts',
+    ' STEP 1 of 3: Create your Telegram assistant',
     '------------------------------------------------------------',
-    ' The bot texts you on WhatsApp when it books (or if something goes wrong).',
-    ' It uses a free service called CallMeBot. I am opening their page now.',
+    ' You will text this assistant to book tee times. On your phone:',
     '',
-    '   1. On that page, find the phone number they tell you to save.',
-    '   2. Save it in your phone contacts (any name, e.g. "CallMeBot").',
-    '   3. In WhatsApp, send that contact the exact message shown on the page',
-    '      (it looks like: I allow callmebot to send me messages).',
-    '   4. Within a minute or two they reply with your "apikey" (a number).',
+    '   1. Install Telegram (App Store / Play Store) and sign up if needed.',
+    '   2. In Telegram, search for  BotFather  (blue check mark) and open it.',
+    '   3. Tap START, then send:  /newbot',
+    '   4. It asks for a name: send something like  Tee Time Assistant',
+    '   5. It asks for a username ending in "bot": e.g.  gabriel_teetime_bot',
+    '   6. It replies with a long TOKEN like  123456789:AAH...  Copy it.',
+    '      (Easiest: open Telegram on this PC at web.telegram.org and copy it there.)',
     ''
   );
-  openUrl('https://www.callmebot.com/blog/free-api-whatsapp-messages/');
+  openUrl('https://web.telegram.org/');
 
-  let phone = '';
-  while (phone.length < 8) {
-    phone = (await ask(' Your WhatsApp number WITH country code (e.g. 1 809 555 1234): ')).replace(/\D/g, '');
-    if (phone.length < 8) say(' That looks too short. Please include the country code.');
+  let token = '', me = null;
+  while (!me) {
+    token = (await ask(' Paste the token here and press Enter: ')).replace(/\s/g, '');
+    me = await tg(token, 'getMe').catch(() => null);
+    if (!me) say(' That token did not work. Copy the whole thing from BotFather and try again.');
   }
-  let key = '';
-  while (!key) key = (await ask(' The apikey CallMeBot sent you: ')).replace(/\s/g, '');
 
-  writeEnv({ WHATSAPP_PHONE: phone, CALLMEBOT_APIKEY: key });
-  say('', ' Sending you a test WhatsApp message...');
-  runNode('bot.js', '--test-alert');
-  const got = await ask(' Did you get the test message on WhatsApp? (Y/n): ');
-  if (/^n/i.test(got)) {
-    say(
-      '',
-      ' No problem. Usually the apikey or number has a typo.',
-      ' Just double-click SETUP again later and re-enter them.',
-      ' (The bot still books without WhatsApp, you just will not get alerts.)'
-    );
-  } else {
-    say(' Great, alerts are working.');
+  say(
+    '',
+    ` Found your assistant: @${me.username}`,
+    ' Now open it in Telegram and tap START (or send it "hi").',
+    ` Link: https://t.me/${me.username}`,
+    '',
+    ' Waiting for your message...'
+  );
+  openUrl(`https://t.me/${me.username}`);
+
+  let chat = null;
+  for (let i = 0; i < 60 && !chat; i++) {
+    const updates = await tg(token, 'getUpdates', { timeout: 5 }).catch(() => []);
+    const m = updates.map((u) => u.message).filter((x) => x && x.chat && x.chat.type === 'private').pop();
+    if (m) chat = m.chat;
   }
+  if (!chat) {
+    say(' I did not see your message. Double-click SETUP again to retry.');
+    throw new Error('No Telegram message received.');
+  }
+
+  writeEnv({ TELEGRAM_BOT_TOKEN: token, TELEGRAM_CHAT_ID: String(chat.id) });
+  await tg(token, 'sendMessage', { chat_id: chat.id, text: '✅ Connected! Only you can use this assistant. Finish the setup on the computer.' });
+  say(` Connected to ${chat.first_name || 'you'}. Check Telegram for a "Connected" message.`);
 }
 
 async function loginStep() {
@@ -104,8 +124,8 @@ async function loginStep() {
 }
 
 (async () => {
-  say('', ' Hi! This sets up your tee-time bot. It only takes a few minutes.');
-  await whatsappStep();
+  say('', ' Hi! This sets up your tee-time assistant. It only takes a few minutes.');
+  await telegramStep();
   await loginStep();
   rl.close();
 })().catch((e) => {
